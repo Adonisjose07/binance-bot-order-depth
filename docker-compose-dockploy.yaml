@@ -21,7 +21,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - ${DOCKER_NETWORK:-bridge}
+      - dokploy-network
 networks:
   dokploy-network:
     external: true
