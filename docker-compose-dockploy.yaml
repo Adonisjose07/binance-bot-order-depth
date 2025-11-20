@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  binance-bot:
+    build: .
+    container_name: binance-depth-bot
+    ports:
+      - "${WEBSOCKET_PORT_2}:${WEBSOCKET_PORT_2}"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - ${DOCKER_NETWORK:-bridge}
+networks:
+  dokploy-network:
+    external: true
