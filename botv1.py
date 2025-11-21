@@ -25,8 +25,8 @@ class DepthConfig:
         # Valores por defecto
         self.symbol = os.getenv('SYMBOL', 'BTCUSDT')
         self.periods = self.get_all_periods()
-        self.interval_seconds = int(os.getenv('INTERVAL_SECONDS', 1))
-        self.order_book_limit = int(os.getenv('ORDER_BOOK_LIMIT', 1000))
+        self.interval_seconds = int(os.getenv('INTERVAL_SECONDS', 1))  # Cambiado a 1 segundo
+        self.order_book_limit = int(os.getenv('ORDER_BOOK_LIMIT', 1000))  # Cambiado a 1000
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
         self.api_key = os.getenv('BINANCE_API_KEY', '')
         self.secret_key = os.getenv('BINANCE_SECRET_KEY', '')
@@ -34,28 +34,6 @@ class DepthConfig:
         self.host = os.getenv('HOST', '0.0.0.0')
         self.data_log_file = os.getenv('DATA_LOG_FILE', 'depth_data.jsonl')
         
-        # Validar configuración al inicializar
-        self.validate_config()
-        
-    def validate_config(self):
-        """Validar configuración"""
-        errors = []
-        
-        if not self.symbol:
-            errors.append("Símbolo no configurado")
-        
-        if self.interval_seconds < 1:
-            errors.append("Intervalo debe ser al menos 1 segundo")
-        
-        if self.order_book_limit not in [100, 500, 1000, 5000]:
-            errors.append("Límite de order book debe ser 100, 500, 1000 o 5000")
-        
-        if not self.api_key and not self.secret_key:
-            print("⚠️  Advertencia: API keys no configuradas - solo endpoints públicos disponibles")
-        
-        if errors:
-            raise ValueError(f"Errores de configuración: {', '.join(errors)}")
-    
     def get_all_periods(self):
         """Todos los períodos disponibles en Binance"""
         return {
@@ -88,8 +66,6 @@ class DepthConfig:
             self.websocket_port = args.port
         if args.host:
             self.host = args.host
-        # Revalidar después de actualizar
-        self.validate_config()
 
 class DataLogger:
     """Clase para guardar datos en formato JSONL"""
@@ -230,6 +206,39 @@ class PeriodData:
         if std_ratio < 0.1: return "HIGH"
         elif std_ratio < 0.3: return "MEDIUM"
         else: return "LOW (VOLATILE)"
+    
+    def calculate_trend(self, avg_ratio):
+        """Calcular tendencia basada en el ratio promedio del histórico"""
+        if avg_ratio > 1.2:
+            return "STRONG_BUY"
+        elif avg_ratio > 1.05:
+            return "BUY"
+        elif avg_ratio > 0.95:
+            return "NEUTRAL"
+        elif avg_ratio > 0.8:
+            return "SELL"
+        else:
+            return "STRONG_SELL"
+    
+    def calculate_strength(self, std_ratio):
+        """Calcular fuerza de la tendencia basada en la desviación estándar"""
+        if std_ratio < 0.05:
+            return "HIGH"
+        elif std_ratio < 0.1:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def calculate_reliability(self, actual_samples, data_coverage):
+        """Calcular confiabilidad del análisis basado en cobertura de datos"""
+        if data_coverage >= 80:
+            return "HIGH"
+        elif data_coverage >= 50:
+            return "MEDIUM"
+        elif data_coverage >= 20:
+            return "LOW"
+        else:
+            return "VERY_LOW"
 
 class DepthDataManager:
     """Gestiona el almacenamiento y cálculo de datos de profundidad"""
@@ -380,47 +389,6 @@ class DepthDataManager:
         """Obtener métricas actuales"""
         with self.data_lock:
             return self.current_metrics.copy()
-    
-    def get_system_health(self):
-        """Estado de salud del sistema"""
-        health = {
-            'timestamp': datetime.now().isoformat(),
-            'status': 'HEALTHY',
-            'components': {}
-        }
-        
-        # Verificar data manager
-        try:
-            current_metrics = self.get_current_metrics()
-            health['components']['data_manager'] = {
-                'status': 'OK' if current_metrics else 'ERROR',
-                'last_update': current_metrics.get('timestamp').isoformat() if current_metrics and current_metrics.get('timestamp') else 'Never'
-            }
-        except Exception as e:
-            health['components']['data_manager'] = {'status': 'ERROR', 'error': str(e)}
-        
-        # Verificar períodos
-        period_status = {}
-        for period_name, period_data in self.periods_data.items():
-            samples = len(period_data.data)
-            expected_samples = period_data.max_samples
-            coverage = (samples / expected_samples) * 100 if expected_samples > 0 else 0
-            
-            period_status[period_name] = {
-                'samples': samples,
-                'expected': expected_samples,
-                'coverage_pct': round(coverage, 1),
-                'status': 'OK' if coverage > 10 else 'LOW_DATA'  # Al menos 10% de datos
-            }
-        
-        health['components']['periods'] = period_status
-        
-        # Determinar estado general
-        errors = [comp for comp in health['components'].values() if comp.get('status') == 'ERROR']
-        if errors:
-            health['status'] = 'DEGRADED'
-        
-        return health
 
 class CandleGenerator:
     """Genera velas OHLC con memoria acumulativa"""
@@ -476,10 +444,7 @@ class CandleGenerator:
 
     def get_current_candle(self):
         with self.lock:
-            # CORREGIDO: Manejar caso cuando no hay vela
-            if self.current_candle is None:
-                return None
-            return self.current_candle.copy()
+            return self.current_candle.copy() if self.current_candle else None
 
 class BinanceDepthAnalyzer:
     def __init__(self, config: DepthConfig):
@@ -489,9 +454,7 @@ class BinanceDepthAnalyzer:
         self.client = None
         self.running = False
         self.setup_binance_client()
-        self.candle_generator = CandleGenerator()
-        self.last_closed_candle = None
-        self.current_candle = None
+        self.candle_generator = CandleGenerator() # Inicializar
         
     def setup_logging(self):
         """Configurar el sistema de logging"""
@@ -532,7 +495,7 @@ class BinanceDepthAnalyzer:
     
     def calculate_depth_metrics(self, order_book):
         """
-        Calcular métricas de profundidad del mercado - VERSIÓN MEJORADA
+        Calcular métricas de profundidad del mercado
         """
         if not order_book or 'bids' not in order_book or 'asks' not in order_book:
             return None
@@ -546,37 +509,25 @@ class BinanceDepthAnalyzer:
         ask_prices = np.array([float(ask[0]) for ask in asks])
         ask_volumes = np.array([float(ask[1]) for ask in asks])
         
-        # Cálculos básicos
+        # Calcular volúmenes totales (más preciso con 5000 niveles)
         total_bid_volume = np.sum(bid_volumes)
         total_ask_volume = np.sum(ask_volumes)
         
+        # Ratio de profundidad (métrica principal)
         if total_ask_volume > 0:
             bid_depth_ratio = total_bid_volume / total_ask_volume
         else:
             bid_depth_ratio = 0
         
-        # VWAP
+        # Precios promedios ponderados
         bid_vwap = np.sum(bid_prices * bid_volumes) / total_bid_volume if total_bid_volume > 0 else 0
         ask_vwap = np.sum(ask_prices * ask_volumes) / total_ask_volume if total_ask_volume > 0 else 0
+        spread = ask_vwap - bid_vwap
         
-        # NUEVAS MÉTRICAS
-        # 1. Imbalance en los primeros 10 niveles
-        top_levels = 10
-        top_bid_volume = np.sum(bid_volumes[:top_levels])
-        top_ask_volume = np.sum(ask_volumes[:top_levels])
-        top_imbalance = top_bid_volume / top_ask_volume if top_ask_volume > 0 else 0
-        
-        # 2. Profundidad a diferentes distancias del precio
-        if bids and asks:
-            mid_price = (float(bids[0][0]) + float(asks[0][0])) / 2
-            # Volumen dentro del 0.5% del mid price
-            price_threshold = mid_price * 0.005
-            
-            bid_near_volume = np.sum(bid_volumes[bid_prices >= (mid_price - price_threshold)])
-            ask_near_volume = np.sum(ask_volumes[ask_prices <= (mid_price + price_threshold)])
-            near_imbalance = bid_near_volume / ask_near_volume if ask_near_volume > 0 else 0
-        else:
-            near_imbalance = 0
+        # Métricas adicionales
+        best_bid = float(bids[0][0]) if bids else 0
+        best_ask = float(asks[0][0]) if asks else 0
+        immediate_spread = best_ask - best_bid
         
         metrics = {
             'symbol': self.config.symbol,
@@ -586,28 +537,17 @@ class BinanceDepthAnalyzer:
             'bid_depth_ratio': bid_depth_ratio,
             'bid_vwap': bid_vwap,
             'ask_vwap': ask_vwap,
-            'spread': ask_vwap - bid_vwap,
-            'best_bid': float(bids[0][0]) if bids else 0,
-            'best_ask': float(asks[0][0]) if asks else 0,
-            
-            # Nuevas métricas
-            'top_imbalance': top_imbalance,
-            'near_imbalance': near_imbalance,
+            'spread': spread,
+            'spread_percentage': (spread / bid_vwap) * 100 if bid_vwap > 0 else 0,
+            'best_bid': best_bid,
+            'best_ask': best_ask,
+            'immediate_spread': immediate_spread,
+            'immediate_spread_percentage': (immediate_spread / best_bid) * 100 if best_bid > 0 else 0,
             'bid_levels': len(bids),
             'ask_levels': len(asks),
-            'pressure': 'BUY' if bid_depth_ratio > 1 else 'SELL',
-            
-            # Información de agregación
-            'top_bid_volume': top_bid_volume,
-            'top_ask_volume': top_ask_volume,
+            'pressure': 'BUY' if bid_depth_ratio > 1 else 'SELL'
         }
         
-        # Calcular porcentajes
-        if bid_vwap > 0:
-            metrics['spread_percentage'] = (metrics['spread'] / bid_vwap) * 100
-        else:
-            metrics['spread_percentage'] = 0
-            
         return metrics
     
     def start_data_collection(self):
@@ -654,10 +594,8 @@ class BinanceDepthAnalyzer:
     def stop_data_collection(self):
         """Detener recolección de datos"""
         self.running = False
-    
-    def get_system_health(self):
-        """Obtener estado de salud del sistema"""
-        return self.data_manager.get_system_health()
+
+# WebSocketServer se mantiene igual (omitiendo por brevedad, pero con los mismos cambios)
 
 class WebSocketServer:
     def __init__(self, analyzer: BinanceDepthAnalyzer, config: DepthConfig):
@@ -679,9 +617,6 @@ class WebSocketServer:
                     data = json.loads(message)
                     if data.get('type') == 'PING':
                         await websocket.send(json.dumps({'type': 'PONG', 'timestamp': datetime.now().isoformat()}))
-                    elif data.get('type') == 'HEALTH':
-                        health = self.analyzer.get_system_health()
-                        await websocket.send(json.dumps({'type': 'HEALTH', 'data': health}))
                 except json.JSONDecodeError:
                     self.logger.warning(f"Mensaje inválido de {client_id}")
                 
@@ -742,9 +677,7 @@ class WebSocketServer:
             # Obtener vela actual en formación
             current_candle = self.analyzer.candle_generator.get_current_candle()
             
-            # VALIDACIÓN MEJORADA
-            if not current_metrics:
-                self.logger.warning("No hay métricas actuales para broadcast")
+            if not current_metrics or not period_analysis:
                 return
             
             complete_data = {
@@ -757,12 +690,8 @@ class WebSocketServer:
                     'available_periods': list(self.config.periods.keys())
                 },
                 'current_metrics': self.serialize_metrics(current_metrics),
-                'period_analysis': period_analysis or {},
+                'period_analysis': period_analysis,
                 'candle': current_candle, # <--- AGREGAR ESTO
-                'system_info': {
-                    'start_time': self.analyzer.data_manager.start_time.isoformat(),
-                    'samples_count': sum(len(period.data) for period in self.analyzer.data_manager.periods_data.values())
-                }
             }
             # Limpiar la bandera de vela cerrada para no enviarla repetida si no es necesario
             if self.analyzer.last_closed_candle:
@@ -774,15 +703,14 @@ class WebSocketServer:
             for client in self.connected_clients:
                 try:
                     await client.send(message)
-                except (websockets.exceptions.ConnectionClosed, websockets.exceptions.WebSocketException) as e:
-                    self.logger.debug(f"Cliente desconectado durante broadcast: {e}")
+                except websockets.exceptions.ConnectionClosed:
                     disconnected_clients.append(client)
             
             for client in disconnected_clients:
                 self.connected_clients.remove(client)
                 
         except Exception as e:
-            self.logger.error(f"Error en broadcast: {e}", exc_info=True)
+            self.logger.error(f"Error en broadcast: {e}")
     
     async def start_automatic_broadcast(self):
         broadcast_count = 0

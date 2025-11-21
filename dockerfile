@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
 # Copiar requirements primero para cachear layers
 COPY requirements.txt .
 
+# Actualizar pip y herramientas de construcción
+RUN python -m pip install --upgrade pip setuptools wheel
+
 # Instalar dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
