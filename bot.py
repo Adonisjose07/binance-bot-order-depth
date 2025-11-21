@@ -26,7 +26,7 @@ class DepthConfig:
         self.symbol = os.getenv('SYMBOL', 'BTCUSDT')
         self.periods = self.get_all_periods()
         self.interval_seconds = int(os.getenv('INTERVAL_SECONDS', 1))
-        self.order_book_limit = int(os.getenv('ORDER_BOOK_LIMIT', 1000))
+        self.order_book_limit = int(os.getenv('ORDER_BOOK_LIMIT', 5000))
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
         self.api_key = os.getenv('BINANCE_API_KEY', '')
         self.secret_key = os.getenv('BINANCE_SECRET_KEY', '')
